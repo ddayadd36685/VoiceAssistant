@@ -1,0 +1,12 @@
+pyaudio
+numpy
+rich
+openai-whisper
+sherpa-onnx
+pyyaml
+fastapi
+uvicorn
+websockets
+PyQt6
+websocket-client
+requests

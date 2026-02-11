@@ -1,0 +1,9 @@
+audio:
+  pre_roll_sec: 2.0
+vad:
+  silence_threshold: 500
+  max_recording_sec: 10.0
+kws:
+  keywords_score: 1.0
+  keywords_threshold: 0.25
+  cooldown_sec: 2.0

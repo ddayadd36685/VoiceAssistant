@@ -1,0 +1,40 @@
+voice_assistant
+├── mcp_config
+│   ├── file_config.yaml
+│   └── web_config.yaml
+├── mcptool
+│   ├── __init__.py
+│   ├── open_file.py
+│   └── open_web.py
+├── tests
+│   ├── manual
+│   │   └── mic_test.py
+│   ├── unit
+│   │   ├── test_mcptool.py
+│   │   └── test_voice_assistant.py
+│   ├── download_kws_model.py
+│   ├── download_sherpa_model.py
+│   └── test_asr.py
+├── voice_assistant
+│   ├── ui
+│   │   └── app.py
+│   ├── __init__.py
+│   ├── asr.py
+│   ├── audio_stream.py
+│   ├── logger.py
+│   ├── mcp_client.py
+│   ├── parser.py
+│   ├── server.py
+│   ├── state_machine.py
+│   ├── vad_recorder.py
+│   └── wakeword.py
+├── config.yaml
+├── main.py
+├── plan.md
+├── project_tree.txt
+├── requirements.txt
+├── run_app.py
+├── run_server.py
+├── run_ui.py
+├── save_tree.py
+└── 项目需求说明书.md
