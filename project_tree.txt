@@ -30,11 +30,10 @@ voice_assistant
 │   └── wakeword.py
 ├── config.yaml
 ├── main.py
-├── plan.md
 ├── project_tree.txt
+├── README.md
 ├── requirements.txt
 ├── run_app.py
 ├── run_server.py
 ├── run_ui.py
-├── save_tree.py
-└── 项目需求说明书.md
+└── save_tree.py
