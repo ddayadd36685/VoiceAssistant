@@ -1,6 +1,7 @@
 import sys
 import time
 import subprocess
+import signal
 import requests
 from voice_assistant.ui.app import main as ui_main
 
@@ -61,11 +62,25 @@ def main():
         if started_by_launcher and backend_process is not None:
             print("Shutting down backend...")
             if backend_process.poll() is None:
-                backend_process.terminate()
+                graceful_sent = False
                 try:
-                    backend_process.wait(timeout=5)
+                    if sys.platform.startswith("win") and hasattr(signal, "CTRL_BREAK_EVENT"):
+                        backend_process.send_signal(signal.CTRL_BREAK_EVENT)
+                        graceful_sent = True
+                    else:
+                        backend_process.send_signal(signal.SIGINT)
+                        graceful_sent = True
+                except Exception:
+                    graceful_sent = False
+
+                try:
+                    backend_process.wait(timeout=6 if graceful_sent else 2)
                 except subprocess.TimeoutExpired:
-                    backend_process.kill()
+                    backend_process.terminate()
+                    try:
+                        backend_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        backend_process.kill()
         print("Application cleanup complete.")
 
 if __name__ == "__main__":

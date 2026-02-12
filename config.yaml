@@ -3,6 +3,8 @@ audio:
 vad:
   silence_threshold: 500
   max_recording_sec: 10.0
+  wakeup_silence_limit_sec: 3.0
+  wakeup_silence_ramp_sec: 1.0
 kws:
   keywords_score: 1.0
   keywords_threshold: 0.25

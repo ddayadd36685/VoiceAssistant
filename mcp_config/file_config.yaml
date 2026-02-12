@@ -1,14 +1,17 @@
 files:
-  - keywords:
-      - 英雄联盟
-      - 无畏契约
-      - Wegame
-      - WeGame
-    path: "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\腾讯游戏\\WeGame\\WeGame.lnk"
-  - keywords:
-      - 谷歌浏览器
-      - Chrome
-    path: "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Google Chrome.lnk"
-  - keywords:
-      - 微信
-    path: "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\微信\\微信.lnk"
+- keywords:
+  - 英雄联盟
+  - 无畏契约
+  - Wegame
+  - WeGame
+  path: C:\ProgramData\Microsoft\Windows\Start Menu\Programs\腾讯游戏\WeGame\WeGame.lnk
+- keywords:
+  - 谷歌浏览器
+  - Chrome
+  path: C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Google Chrome.lnk
+- keywords:
+  - 微信
+  path: C:\ProgramData\Microsoft\Windows\Start Menu\Programs\微信\微信.lnk
+- keywords:
+  - 梯子
+  path: C:\ProgramData\Microsoft\Windows\Start Menu\Programs\SakuraCat.lnk
