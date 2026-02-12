@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QMenu, QSystemTrayIcon,
     QGraphicsOpacityEffect, QDialog, QTabWidget, QFormLayout, QHBoxLayout,
     QPushButton, QDoubleSpinBox, QSpinBox, QLineEdit, QTableWidget,
-    QTableWidgetItem, QFileDialog, QMessageBox, QHeaderView, QAbstractItemView
+    QTableWidgetItem, QFileDialog, QMessageBox, QHeaderView, QAbstractItemView,
+    QComboBox
 )
 from PyQt6.QtCore import (
     Qt, QPoint, QPointF, pyqtSignal, QObject, QTimer, QPropertyAnimation,
@@ -20,6 +21,8 @@ from PyQt6.QtGui import (
     QPainter, QColor, QBrush, QAction, QIcon, QCursor, QFont, QFontMetrics,
     QRadialGradient, QPen, QConicalGradient, QPainterPath, QLinearGradient
 )
+
+RESTART_EXIT_CODE = 190
 
 class BackendWorker(QObject):
     state_changed = pyqtSignal(str) # new_state
@@ -334,6 +337,8 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("设置")
         self.setMinimumWidth(760)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        self.restart_required = False
+        self._initial_asr_provider = None
 
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget(self)
@@ -499,6 +504,10 @@ class SettingsDialog(QDialog):
         self.kws_cooldown.setRange(0.0, 60.0)
         self.kws_cooldown.setSingleStep(0.1)
 
+        self.asr_provider = QComboBox()
+        self.asr_provider.addItems(["sherpa", "funasr"])
+
+        form.addRow("ASR 引擎 (需重启)", self.asr_provider)
         form.addRow("预录音时长（秒）", self.audio_pre_roll)
         form.addRow("静音阈值（RMS）", self.vad_silence_threshold)
         form.addRow("最大录音时长（秒）", self.vad_max_recording)
@@ -605,13 +614,19 @@ class SettingsDialog(QDialog):
         audio = data.get("audio", {})
         vad = data.get("vad", {})
         kws = data.get("kws", {})
+        asr = data.get("asr", {})
         if not isinstance(audio, dict):
             audio = {}
         if not isinstance(vad, dict):
             vad = {}
         if not isinstance(kws, dict):
             kws = {}
+        if not isinstance(asr, dict):
+            asr = {}
 
+        self.asr_provider.setCurrentText(str(asr.get("provider", "sherpa")))
+        if self._initial_asr_provider is None:
+            self._initial_asr_provider = self.asr_provider.currentText()
         self.audio_pre_roll.setValue(float(audio.get("pre_roll_sec", 2.0)))
         self.vad_silence_threshold.setValue(int(vad.get("silence_threshold", 500)))
         self.vad_max_recording.setValue(float(vad.get("max_recording_sec", 10.0)))
@@ -665,6 +680,7 @@ class SettingsDialog(QDialog):
         audio = data.get("audio")
         vad = data.get("vad")
         kws = data.get("kws")
+        asr = data.get("asr")
         if not isinstance(audio, dict):
             audio = {}
             data["audio"] = audio
@@ -674,6 +690,11 @@ class SettingsDialog(QDialog):
         if not isinstance(kws, dict):
             kws = {}
             data["kws"] = kws
+        if not isinstance(asr, dict):
+            asr = {}
+            data["asr"] = asr
+        
+        asr["provider"] = self.asr_provider.currentText()
 
         audio["pre_roll_sec"] = float(self.audio_pre_roll.value())
 
@@ -718,7 +739,16 @@ class SettingsDialog(QDialog):
 
     def _on_save(self):
         try:
-            self._write_yaml(self.config_path, self._collect_main_config())
+            main_config = self._collect_main_config()
+            new_provider = ""
+            if isinstance(main_config, dict):
+                asr = main_config.get("asr", {})
+                if isinstance(asr, dict):
+                    new_provider = str(asr.get("provider", "")).strip()
+            if self._initial_asr_provider is not None and new_provider and new_provider != self._initial_asr_provider:
+                self.restart_required = True
+
+            self._write_yaml(self.config_path, main_config)
             self._write_yaml(self.file_config_path, self._collect_file_config())
             self._write_yaml(self.web_config_path, self._collect_web_config())
         except Exception:
@@ -776,7 +806,11 @@ class FloatingBall(QWidget):
         project_root = Path(__file__).resolve().parents[2]
         dlg = SettingsDialog(project_root, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._show_toast("success", "设置已保存", "")
+            if getattr(dlg, "restart_required", False):
+                self._show_toast("info", "ASR 已切换", "正在重启应用…")
+                QTimer.singleShot(450, lambda: QApplication.instance().exit(RESTART_EXIT_CODE))
+            else:
+                self._show_toast("success", "设置已保存", "")
 
     def update_state(self, state):
         self.current_state = state

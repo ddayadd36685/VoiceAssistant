@@ -12,8 +12,12 @@ except ImportError:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from voice_assistant.logger import get_logger
 
-class ASR:
-    def __init__(self):
+class ASRBackend:
+    def transcribe(self, audio_data: bytes) -> str:
+        raise NotImplementedError
+
+class SherpaASR(ASRBackend):
+    def __init__(self, config: dict):
         self.logger = get_logger(__name__)
         self._hotwords_cache_text: str = ""
         self._hotwords_cache_mtime: Optional[float] = None
@@ -25,15 +29,22 @@ class ASR:
                 "未找到 sherpa-onnx 模块。请运行: .venv\\Scripts\\pip install sherpa-onnx"
             ) from e
 
-        # Model paths
-        base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "voice_assistant", "models", "sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23")
+        default_base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "voice_assistant", "models", "sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23")
+        base_dir = config.get("model_path", default_base_dir)
         
+        if not os.path.isabs(base_dir):
+            base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), base_dir)
+
         if not os.path.exists(base_dir):
-             raise RuntimeError(f"Sherpa model not found at {base_dir}. Please run download_sherpa_model.py")
+             if base_dir != default_base_dir and os.path.exists(default_base_dir):
+                 self.logger.warning(f"Configured model path {base_dir} not found. Falling back to default: {default_base_dir}")
+                 base_dir = default_base_dir
+             else:
+                 raise RuntimeError(f"Sherpa model not found at {base_dir}. Please run download_sherpa_model.py")
 
         self.logger.info(f"Loading Sherpa-ONNX model from {base_dir}...")
         
-        self.hotwords_score = 2.5 # 默认加分
+        self.hotwords_score = 2.5
         
         tokens_path = os.path.join(base_dir, "tokens.txt")
         encoder_path = os.path.join(base_dir, "encoder-epoch-99-avg-1.onnx")
@@ -49,7 +60,7 @@ class ASR:
             sample_rate=16000,
             feature_dim=80,
             decoding_method="modified_beam_search",
-            hotwords_file="", # Optional: can load from file
+            hotwords_file="",
             hotwords_score=self.hotwords_score
         )
         self.logger.info("Sherpa-ONNX model loaded.")
@@ -124,31 +135,106 @@ class ASR:
         return text
 
     def transcribe(self, audio_data: bytes) -> str:
-        """
-        Transcribe audio data (16kHz, mono, int16) to text using Sherpa-ONNX.
-        Note: Although Sherpa supports streaming, we are using it in a 'batch-like' mode here
-        to fit the existing interface.
-        """
-        self.logger.info(f"Transcribing {len(audio_data)} bytes of audio...")
-        
+        self.logger.info(f"Transcribing {len(audio_data)} bytes with Sherpa...")
         try:
-            # Sherpa-ONNX expects float32 samples normalized to [-1, 1]
             samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
-            
             stream = self.recognizer.create_stream(hotwords=self._get_hotwords_text())
             stream.accept_waveform(16000, samples)
-            stream.input_finished() # Tell the stream no more audio is coming
+            stream.input_finished()
             
             while self.recognizer.is_ready(stream):
                 self.recognizer.decode_stream(stream)
             
-            # 使用 recognizer.get_result(stream) 获取结果
-            # 注意：sherpa-onnx 1.9+ 版本 get_result 可能直接返回 string，或者返回对象
-            # 根据报错 'str' object has no attribute 'text'，说明直接返回了字符串
             text = self.recognizer.get_result(stream).strip()
-            self.logger.info(f"ASR Result: {text}")
+            self.logger.info(f"Sherpa Result: {text}")
             return text
-            
         except Exception as e:
-            self.logger.error(f"ASR Transcription failed: {e}", exc_info=True)
+            self.logger.error(f"Sherpa transcription failed: {e}", exc_info=True)
             return ""
+
+class FunASRBackend(ASRBackend):
+    def __init__(self, config: dict):
+        self.logger = get_logger(__name__)
+        try:
+            from funasr import AutoModel
+        except ModuleNotFoundError as e:
+            missing = getattr(e, "name", "") or ""
+            if missing in ("torchaudio", "torch"):
+                raise RuntimeError(
+                    "FunASR 依赖 torch/torchaudio，但当前环境缺少它们。请先安装 torch 和 torchaudio。"
+                ) from e
+            raise RuntimeError("未找到 funasr。请运行 pip install funasr modelscope") from e
+        except ImportError as e:
+            raise RuntimeError("未找到 funasr。请运行 pip install funasr modelscope") from e
+            
+        model_name = config.get("model_name", "iic/SenseVoiceSmall")
+        self.logger.info(f"Loading FunASR model: {model_name}...")
+        
+        try:
+            self.model = AutoModel(
+                model=model_name,
+                trust_remote_code=True,
+                device="cuda" if config.get("device") == "cuda" else "cpu"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to load FunASR model: {e}")
+            raise e
+            
+        self.logger.info("FunASR model loaded.")
+
+    def transcribe(self, audio_data: bytes) -> str:
+        self.logger.info(f"Transcribing {len(audio_data)} bytes with FunASR...")
+        try:
+            samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+            
+            res = self.model.generate(
+                input=samples,
+                cache={},
+                language="auto",
+                use_itn=True,
+                batch_size_s=60
+            )
+            if res and isinstance(res, list) and len(res) > 0:
+                text = res[0].get("text", "")
+                clean_text = re.sub(r"<\|.*?\|>", "", text).strip()
+                self.logger.info(f"FunASR Result: {clean_text} (raw: {text})")
+                return clean_text
+            return ""
+        except Exception as e:
+            self.logger.error(f"FunASR transcription failed: {e}", exc_info=True)
+            return ""
+
+class ASR:
+    def __init__(self):
+        self.logger = get_logger(__name__)
+        self.config = self._load_config()
+        
+        asr_config = self.config.get("asr", {})
+        self.provider = asr_config.get("provider", "sherpa")
+        
+        self.logger.info(f"Initializing ASR provider: {self.provider}")
+
+        try:
+            if self.provider == "funasr":
+                self.backend = FunASRBackend(asr_config.get("funasr", {}))
+            else:
+                self.backend = SherpaASR(asr_config.get("sherpa", {}))
+        except Exception as e:
+            self.logger.error(f"ASR provider init failed ({self.provider}): {e}", exc_info=True)
+            if self.provider != "sherpa":
+                self.provider = "sherpa"
+                self.backend = SherpaASR(asr_config.get("sherpa", {}))
+            else:
+                raise
+
+    def _load_config(self) -> dict:
+        config_path = Path(__file__).resolve().parents[1] / "config.yaml"
+        if not config_path.exists():
+            return {}
+        try:
+            return yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return {}
+
+    def transcribe(self, audio_data: bytes) -> str:
+        return self.backend.transcribe(audio_data)

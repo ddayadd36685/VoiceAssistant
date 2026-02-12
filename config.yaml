@@ -9,3 +9,9 @@ kws:
   keywords_score: 1.0
   keywords_threshold: 0.25
   cooldown_sec: 2.0
+asr:
+  provider: funasr
+  sherpa:
+    model_path: voice_assistant/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
+  funasr:
+    model_name: iic/SenseVoiceSmall
