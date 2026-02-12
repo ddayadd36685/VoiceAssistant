@@ -126,17 +126,28 @@ class VoiceAssistant:
                             self._set_state(State.EXECUTING)
                             
                         elif self.state == State.EXECUTING:
-                            intent = self.current_intent["intent"]
-                            target = self.current_intent["target"]
+                            intent = self.current_intent.get("intent", "unknown")
+                            target = self.current_intent.get("target", "")
+                            reply = self.current_intent.get("reply", "")
+
+                            self._emit("action_started", {"intent": intent, "target": target, "reply": reply})
+
+                            if intent == "chat":
+                                # Just emit the reply for UI/TTS
+                                success = True
+                                result_msg = reply
+                            else:
+                                success = self.mcp.execute(intent, target)
+                                if not success:
+                                    result_msg = f"操作失败: {intent} {target}"
+                                else:
+                                    # If LLM provided a specific reply, use it; otherwise use default
+                                    result_msg = reply if reply else f"已为您执行：{intent} {target}"
                             
-                            self._emit("action_started", {"intent": intent, "target": target})
-                            success = self.mcp.execute(intent, target)
-                            
-                            result_msg = f"Executed {intent} {target}: {'Success' if success else 'Failed'}"
                             self.last_action_result = {"success": success, "message": result_msg}
                             self._emit("action_finished", self.last_action_result)
                             
-                            self.logger.info("Execution done. Returning to IDLE.")
+                            self.logger.info(f"Execution done. Reply: {result_msg}")
                             self._set_state(State.IDLE)
                             
                             # Cooldown to avoid self-triggering from system sounds or echoes

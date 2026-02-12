@@ -149,40 +149,57 @@ class Parser:
             return None
         intent = data.get("intent")
         target = data.get("target", "")
-        if intent not in ("open_file", "open_web", "unknown"):
+        reply = data.get("reply", "")
+        if intent not in ("open_file", "open_web", "chat", "unknown"):
             return None
-        if not isinstance(target, str):
-            return None
-        return {"intent": intent, "target": target}
+        return {"intent": intent, "target": target, "reply": reply}
 
-    def _llm_parse(self, text: str) -> Optional[Dict[str, str]]:
-        if os.getenv("VOICE_ASSISTANT_DISABLE_LLM", "").lower() in ("1", "true", "yes"):
-            return None
+    def parse(self, text: str) -> Dict[str, str]:
+        text = text.strip()
+        self.logger.debug(f"Parsing text: {text}")
 
         file_keywords = self._load_file_keywords()
         web_keywords = self._load_web_keywords()
         web_items = self._load_web_items()
-        if not file_keywords and not web_keywords:
-            return None
 
         api_key = self._load_api_key()
         if not api_key:
-            return None
+            self.logger.warning("No API key found for LLM parser, falling back to basic matching")
+            return {"intent": "chat", "target": "", "reply": "抱歉，我还没配置好大模型，现在只能听懂一些简单的指令。"}
 
         url = "https://api.deepseek.com/v1/chat/completions"
         allowed_file_text = "\n".join(f"- {kw}" for kw in file_keywords)
         allowed_web_text = "\n".join(f"- {kw}" for kw in web_keywords)
+        
         payload = {
             "model": "deepseek-chat",
             "messages": [
                 {
                     "role": "system",
-                    "content": "你是意图解析器。只输出JSON，格式为 {\"intent\":\"open_file|open_web|unknown\",\"target\":\"...\"}。如果 intent=open_file，则 target 必须严格从文件允许列表中选择一个；如果 intent=open_web，则 target 必须严格从网页允许列表中选择一个；否则返回 unknown。",
+                    "content": """你是语音助手的核心解析与对话模块。
+请根据用户的话语，判断其意图并生成回复。必须输出JSON格式：
+{
+  "intent": "open_file" | "open_web" | "chat" | "unknown",
+  "target": "对应列表中的关键词，如果是chat则为空",
+  "reply": "你对用户说的回复语"
+}
+
+意图规则：
+1. open_file: 用户想打开本地文件/应用。target 必须严格从【文件允许列表】中选择最匹配的一个。
+2. open_web: 用户想打开网页。target 必须严格从【网页允许列表】中选择最匹配的一个关键词。
+3. chat: 用户在闲聊、提问或不需要操作系统的行为。你需要给出自然、亲切、简短的回复。
+4. unknown: 无法理解的意图。
+
+回复语规则：
+- 如果是打开操作，回复语应简洁，如“好的，正在为您打开[target]”。
+- 如果是闲聊，回复语应像朋友一样自然，字数不要太多（适合语音播报）。
+"""
                 },
                 {"role": "user", "content": f"文件允许列表：\n{allowed_file_text}\n\n网页允许列表：\n{allowed_web_text}\n\n用户话语：{text}"},
             ],
-            "temperature": 0,
+            "temperature": 0.7,
         }
+        
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -193,76 +210,32 @@ class Parser:
             },
             method="POST",
         )
+        
         try:
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 resp_text = resp.read().decode("utf-8")
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, Exception) as e:
+                data = json.loads(resp_text)
+                content = data["choices"][0]["message"]["content"]
+                parsed = self._extract_json(content)
+                
+                if parsed:
+                    # 归一化 target
+                    if parsed["intent"] == "open_file":
+                        norm = self._normalize_to_allowed_keyword(parsed["target"], file_keywords)
+                        if not norm:
+                            parsed["intent"], parsed["target"] = "chat", ""
+                        else:
+                            parsed["target"] = norm
+                    elif parsed["intent"] == "open_web":
+                        norm = self._normalize_web_to_canonical(parsed["target"], web_items)
+                        if not norm:
+                            parsed["intent"], parsed["target"] = "chat", ""
+                        else:
+                            parsed["target"] = norm
+                    
+                    self.logger.info(f"LLM Parsed: {parsed['intent']} - {parsed['target']}")
+                    return parsed
+        except Exception as e:
             self.logger.error(f"LLM parse failed: {e}")
-            return None
-
-        try:
-            data = json.loads(resp_text)
-            content = data["choices"][0]["message"]["content"]
-        except Exception:
-            return None
-
-        parsed = self._extract_json(content)
-        if not parsed:
-            return None
-        intent = parsed["intent"]
-        target = parsed.get("target", "")
-        if intent == "open_file":
-            normalized = self._normalize_to_allowed_keyword(target, file_keywords)
-            if not normalized:
-                return {"intent": "unknown", "target": ""}
-            return {"intent": "open_file", "target": normalized}
-        if intent == "open_web":
-            normalized = self._normalize_web_to_canonical(target, web_items)
-            if not normalized:
-                return {"intent": "unknown", "target": ""}
-            return {"intent": "open_web", "target": normalized}
-        return {"intent": "unknown", "target": ""}
         
-    def parse(self, text: str) -> Dict[str, str]:
-        text = text.strip()
-        self.logger.debug(f"Parsing text: {text}")
-
-        file_keywords = self._load_file_keywords()
-        web_items = self._load_web_items()
-
-        has_web_hint = bool(re.search(r"(网页|网站|网址|官网|访问|进入)", text))
-        if has_web_hint:
-            for pattern in self.web_patterns:
-                match = re.search(pattern, text, re.IGNORECASE)
-                if match:
-                    target = match.group("target").strip()
-                    target = re.sub(r"[。.！!]+$", "", target)
-                    normalized = self._normalize_web_to_canonical(target, web_items)
-                    if normalized:
-                        self.logger.info(f"Parsed intent: open_web, target: {normalized}")
-                        return {"intent": "open_web", "target": normalized}
-        
-        for pattern in self.patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                target = match.group("target").strip()
-                # Remove common punctuation at the end
-                target = re.sub(r"[。.！!]+$", "", target)
-                # Remove potential suffix command words if caught in target (e.g. "打开 file 打开一下")
-                target = re.sub(r"\s*(?:打开一下|打开)$", "", target)
-
-                normalized_file = self._normalize_to_allowed_keyword(target, file_keywords)
-                if normalized_file:
-                    self.logger.info(f"Parsed intent: open_file, target: {normalized_file}")
-                    return {"intent": "open_file", "target": normalized_file}
-                normalized_web = self._normalize_web_to_canonical(target, web_items)
-                if normalized_web:
-                    self.logger.info(f"Parsed intent: open_web, target: {normalized_web}")
-                    return {"intent": "open_web", "target": normalized_web}
-        llm_res = self._llm_parse(text)
-        if llm_res:
-            self.logger.info(f"Parsed intent (llm): {llm_res['intent']}, target: {llm_res['target']}")
-            return llm_res
-
-        self.logger.info("Parsed intent: unknown")
-        return {"intent": "unknown", "target": ""}
+        return {"intent": "chat", "target": "", "reply": "抱歉，我现在有点走神，没听清你在说什么。"}
