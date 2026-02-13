@@ -71,6 +71,17 @@ asr:
 
 在 UI 的“设置”里切换 ASR 引擎后会触发重启。
 
+### KWS（唤醒词）
+
+唤醒词在 UI 的“设置”→“主配置”里配置（需重启生效），会写入 `config.yaml` 的 `kws.keywords`。
+
+```yaml
+kws:
+  keywords: ["你好小梦", "小梦同学"]
+```
+
+当 `kws.keywords` 为空时，会使用模型自带的关键词文件（`voice_assistant/models/.../keywords.txt`）。当配置了自定义唤醒词时，会在本地生成 `mcp_config/custom_keywords.txt` 并在启动时优先加载它。
+
 ### LLM（意图识别 + 闲聊）
 
 当前 Parser 完全由大模型驱动：既能给系统返回可执行的指令（如打开文件/网页），也能返回对用户的自然回复（闲聊/问答）。

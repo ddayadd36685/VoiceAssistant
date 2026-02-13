@@ -512,10 +512,14 @@ class SettingsDialog(QDialog):
         self.kws_cooldown.setRange(0.0, 60.0)
         self.kws_cooldown.setSingleStep(0.1)
 
+        self.kws_wake_words = QLineEdit()
+        self.kws_wake_words.setPlaceholderText("例如: 你好小梦, 小梦同学 (英文逗号分隔)")
+
         self.asr_provider = QComboBox()
         self.asr_provider.addItems(["sherpa", "funasr"])
 
         form.addRow("ASR 引擎 (需重启)", self.asr_provider)
+        form.addRow("唤醒词 (需重启)", self.kws_wake_words)
         form.addRow("预录音时长（秒）", self.audio_pre_roll)
         form.addRow("静音阈值（RMS）", self.vad_silence_threshold)
         form.addRow("最大录音时长（秒）", self.vad_max_recording)
@@ -643,6 +647,12 @@ class SettingsDialog(QDialog):
         self.kws_keywords_score.setValue(float(kws.get("keywords_score", 1.0)))
         self.kws_keywords_threshold.setValue(float(kws.get("keywords_threshold", 0.25)))
         self.kws_cooldown.setValue(float(kws.get("cooldown_sec", 2.0)))
+        
+        wake_words = kws.get("keywords", [])
+        if isinstance(wake_words, list):
+            self.kws_wake_words.setText(", ".join(str(w) for w in wake_words))
+        else:
+            self.kws_wake_words.setText(str(wake_words))
 
         file_data = self._read_yaml(self.file_config_path) or {}
         files = file_data.get("files", []) if isinstance(file_data, dict) else []
@@ -714,6 +724,12 @@ class SettingsDialog(QDialog):
         kws["keywords_score"] = float(self.kws_keywords_score.value())
         kws["keywords_threshold"] = float(self.kws_keywords_threshold.value())
         kws["cooldown_sec"] = float(self.kws_cooldown.value())
+        
+        raw_words = self.kws_wake_words.text().strip()
+        if raw_words:
+            kws["keywords"] = [w.strip() for w in raw_words.replace("，", ",").split(",") if w.strip()]
+        else:
+            kws["keywords"] = []
 
         return data
 

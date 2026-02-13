@@ -13,3 +13,4 @@ requests
 funasr
 modelscope
 pygame
+pypinyin

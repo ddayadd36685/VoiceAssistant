@@ -39,13 +39,25 @@ class WakeWordDetector:
         tokens_path = os.path.join(base_dir, "tokens.txt")
         keywords_path = os.path.join(base_dir, "keywords.txt")
         
+        self._apply_config()
+        
+        # Check if we have custom keywords
+        if hasattr(self, 'config_keywords') and self.config_keywords:
+            custom_kw_path = Path(__file__).resolve().parents[1] / "mcp_config" / "custom_keywords.txt"
+            # Ensure mcp_config exists (it should, but just in case)
+            custom_kw_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            if self._generate_custom_keywords(self.config_keywords, str(custom_kw_path)):
+                keywords_path = str(custom_kw_path)
+                self.logger.info(f"Using custom keywords from {keywords_path}")
+            else:
+                self.logger.warning("Failed to use custom keywords, falling back to default.")
+
         if not os.path.exists(encoder_path):
             self.logger.error(f"KWS model not found at {base_dir}. Please run download_kws_model.py")
             self.spotter = None
             return
 
-        self._apply_config()
-        
         self.spotter = sherpa_onnx.KeywordSpotter(
             tokens=tokens_path,
             encoder=encoder_path,
@@ -75,6 +87,17 @@ class WakeWordDetector:
         keywords_score = kws.get("keywords_score", self.keywords_score)
         keywords_threshold = kws.get("keywords_threshold", self.keywords_threshold)
         cooldown_sec = kws.get("cooldown_sec", self.cooldown_sec)
+        
+        config_keywords = kws.get("keywords", [])
+        if isinstance(config_keywords, str):
+            config_keywords = [p.strip() for p in config_keywords.replace("，", ",").split(",") if p.strip()]
+        elif isinstance(config_keywords, list):
+            config_keywords = [str(p).strip() for p in config_keywords if str(p).strip()]
+        else:
+            config_keywords = []
+
+        self.config_keywords = config_keywords
+        
         try:
             self.keywords_score = float(keywords_score)
         except Exception:
@@ -88,6 +111,48 @@ class WakeWordDetector:
         except Exception:
             pass
     
+    def _generate_custom_keywords(self, keywords: list, output_path: str) -> bool:
+        try:
+            import pypinyin
+        except ImportError:
+            self.logger.error("pypinyin not installed. Cannot generate custom keywords.")
+            return False
+
+        lines = []
+        for kw in keywords:
+            kw = str(kw).strip()
+            if not kw:
+                continue
+            
+            # Convert to pinyin: initials and finals
+            # strict=False allows handling some edge cases better
+            initials = pypinyin.pinyin(kw, style=pypinyin.Style.INITIALS, strict=False)
+            finals = pypinyin.pinyin(kw, style=pypinyin.Style.FINALS_TONE, strict=False)
+            
+            phones = []
+            for i_list, f_list in zip(initials, finals):
+                i = i_list[0].strip()
+                f = f_list[0].strip()
+                if i:
+                    phones.append(i)
+                if f:
+                    phones.append(f)
+            
+            if phones:
+                phone_str = " ".join(phones)
+                lines.append(f"{phone_str} @{kw}")
+        
+        if not lines:
+            return False
+            
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to write custom keywords: {e}")
+            return False
+
     def process(self, chunk: bytes) -> Optional[str]:
         """
         Process audio chunk and return keyword string if detected, else None.

@@ -9,6 +9,7 @@ kws:
   keywords_score: 1.0
   keywords_threshold: 0.25
   cooldown_sec: 2.0
+  keywords: []
 asr:
   provider: funasr
   sherpa:
