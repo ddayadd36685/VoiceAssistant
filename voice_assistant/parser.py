@@ -137,7 +137,7 @@ class Parser:
 
         return None
 
-    def _extract_json(self, content: str) -> Optional[Dict[str, str]]:
+    def _extract_json(self, content: str) -> Optional[Dict[str, Any]]:
         text = content.strip()
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
@@ -148,14 +148,31 @@ class Parser:
             return None
         if not isinstance(data, dict):
             return None
-        intent = data.get("intent")
-        target = data.get("target", "")
+            
+        # Support both old and new format for backward compatibility
+        actions = []
+        if "actions" in data and isinstance(data["actions"], list):
+            for act in data["actions"]:
+                if isinstance(act, dict) and "intent" in act and "target" in act:
+                    actions.append(act)
+        elif "intent" in data and "target" in data:
+             actions.append({"intent": data["intent"], "target": data["target"]})
+             
         reply = data.get("reply", "")
-        if intent not in ("open_file", "open_web", "chat", "unknown"):
+        
+        # Validate intents
+        valid_actions = []
+        for act in actions:
+            intent = act.get("intent")
+            if intent in ("open_file", "open_web", "chat", "unknown"):
+                valid_actions.append(act)
+                
+        if not valid_actions and not reply:
             return None
-        return {"intent": intent, "target": target, "reply": reply}
+            
+        return {"actions": valid_actions, "reply": reply}
 
-    def parse(self, text: str) -> Dict[str, str]:
+    def parse(self, text: str) -> Dict[str, Any]:
         text = text.strip()
         self.logger.debug(f"Parsing text: {text}")
 
@@ -165,6 +182,8 @@ class Parser:
 
         disable_llm = (os.getenv("VOICE_ASSISTANT_DISABLE_LLM") or "").strip().lower() in ("1", "true", "yes", "y")
         if disable_llm:
+            notice = "提示：大模型不可用，已使用离线规则解析。"
+            actions = []
             for pat in self.web_patterns:
                 m = re.search(pat, text)
                 if not m:
@@ -172,23 +191,33 @@ class Parser:
                 raw_target = (m.groupdict().get("target") or "").strip()
                 norm = self._normalize_web_to_canonical(raw_target, web_items)
                 if norm:
-                    return {"intent": "open_web", "target": norm, "reply": ""}
+                    actions.append({"intent": "open_web", "target": norm})
+                    # For basic matching, we might stop at first match or continue. 
+                    # Let's stop to match previous behavior or just allow one.
+                    break
 
-            for pat in self.patterns:
-                m = re.search(pat, text)
-                if not m:
-                    continue
-                raw_target = (m.groupdict().get("target") or "").strip()
-                norm = self._normalize_to_allowed_keyword(raw_target, file_keywords)
-                if norm:
-                    return {"intent": "open_file", "target": norm, "reply": ""}
+            if not actions:
+                for pat in self.patterns:
+                    m = re.search(pat, text)
+                    if not m:
+                        continue
+                    raw_target = (m.groupdict().get("target") or "").strip()
+                    norm = self._normalize_to_allowed_keyword(raw_target, file_keywords)
+                    if norm:
+                        actions.append({"intent": "open_file", "target": norm})
+                        break
+            
+            if not actions:
+                actions.append({"intent": "unknown", "target": ""})
 
-            return {"intent": "unknown", "target": "", "reply": ""}
+            if actions and actions[0].get("intent") in ("open_file", "open_web"):
+                return {"actions": actions, "reply": notice}
+            return {"actions": actions, "reply": f"{notice}（如果你希望更准确的理解与闲聊，请配置 DEEPSEEK_API_KEY）"}
 
         api_key = self._load_api_key()
         if not api_key:
             self.logger.warning("No API key found for LLM parser, falling back to basic matching")
-            return {"intent": "chat", "target": "", "reply": "抱歉，我还没配置好大模型，现在只能听懂一些简单的指令。"}
+            return {"actions": [{"intent": "chat", "target": ""}], "reply": "抱歉，我还没配置好大模型，现在只能听懂一些简单的指令。"}
 
         url = "https://api.deepseek.com/v1/chat/completions"
         allowed_file_text = "\n".join(f"- {kw}" for kw in file_keywords)
@@ -202,8 +231,12 @@ class Parser:
                     "content": """你是语音助手的核心解析与对话模块。
 请根据用户的话语，判断其意图并生成回复。必须输出JSON格式：
 {
-  "intent": "open_file" | "open_web" | "chat" | "unknown",
-  "target": "对应列表中的关键词，如果是chat则为空",
+  "actions": [
+    {
+      "intent": "open_file" | "open_web" | "chat" | "unknown",
+      "target": "对应列表中的关键词，如果是chat则为空"
+    }
+  ],
   "reply": "你对用户说的回复语"
 }
 
@@ -212,6 +245,7 @@ class Parser:
 2. open_web: 用户想打开网页。target 必须严格从【网页允许列表】中选择最匹配的一个关键词。
 3. chat: 用户在闲聊、提问或不需要操作系统的行为。你需要给出自然、亲切、简短的回复。
 4. unknown: 无法理解的意图。
+5. actions 列表可以包含多个任务（例如用户说“打开A和B”）。如果是纯闲聊，actions 列表可以只包含一个 chat intent，或者为空。
 
 回复语规则：
 - 如果是打开操作，回复语应简洁，如“好的，正在为您打开[target]”。
@@ -242,23 +276,30 @@ class Parser:
                 parsed = self._extract_json(content)
                 
                 if parsed:
-                    # 归一化 target
-                    if parsed["intent"] == "open_file":
-                        norm = self._normalize_to_allowed_keyword(parsed["target"], file_keywords)
-                        if not norm:
-                            parsed["intent"], parsed["target"] = "chat", ""
+                    valid_actions = []
+                    for act in parsed.get("actions", []):
+                        # 归一化 target
+                        if act["intent"] == "open_file":
+                            norm = self._normalize_to_allowed_keyword(act["target"], file_keywords)
+                            if norm:
+                                act["target"] = norm
+                                valid_actions.append(act)
+                        elif act["intent"] == "open_web":
+                            norm = self._normalize_web_to_canonical(act["target"], web_items)
+                            if norm:
+                                act["target"] = norm
+                                valid_actions.append(act)
                         else:
-                            parsed["target"] = norm
-                    elif parsed["intent"] == "open_web":
-                        norm = self._normalize_web_to_canonical(parsed["target"], web_items)
-                        if not norm:
-                            parsed["intent"], parsed["target"] = "chat", ""
-                        else:
-                            parsed["target"] = norm
+                            # chat or unknown
+                            valid_actions.append(act)
                     
-                    self.logger.info(f"LLM Parsed: {parsed['intent']} - {parsed['target']}")
+                    parsed["actions"] = valid_actions
+                    
+                    # Log actions
+                    action_strs = [f"{a['intent']}:{a['target']}" for a in valid_actions]
+                    self.logger.info(f"LLM Parsed Actions: {', '.join(action_strs)}")
                     return parsed
         except Exception as e:
             self.logger.error(f"LLM parse failed: {e}")
         
-        return {"intent": "chat", "target": "", "reply": "抱歉，我现在有点走神，没听清你在说什么。"}
+        return {"actions": [{"intent": "chat", "target": ""}], "reply": "抱歉，我现在有点走神，没听清你在说什么。"}

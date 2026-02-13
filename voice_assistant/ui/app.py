@@ -73,8 +73,14 @@ class BackendWorker(QObject):
                 self.text_received.emit(f"Heard: {payload.get('text')}")
                 
             elif evt_type == "action_finished":
+                ok = payload.get("success")
                 msg = payload.get("message", "")
-                self.text_received.emit(f"Result: {msg}")
+                if ok is True:
+                    self.text_received.emit(f"ResultOK: {msg}")
+                elif ok is False:
+                    self.text_received.emit(f"ResultFAIL: {msg}")
+                else:
+                    self.text_received.emit(f"Result: {msg}")
                 
         except Exception as e:
             print(f"Msg parse error: {e}")
@@ -849,6 +855,11 @@ class FloatingBall(QWidget):
             kind = "listening"
             title = "我听到"
             subtitle = text.replace("Heard:", "", 1).strip()
+        elif text.startswith("ResultOK:") or text.startswith("ResultFAIL:"):
+            ok = text.startswith("ResultOK:")
+            kind = "success" if ok else "error"
+            title = "已完成" if ok else "执行失败"
+            subtitle = text.split(":", 1)[1].strip()
         elif text.startswith("Result:"):
             raw = text.replace("Result:", "", 1).strip()
             raw = raw.replace("Executed ", "", 1).strip()
@@ -856,9 +867,11 @@ class FloatingBall(QWidget):
             status = ""
             left = raw
             if ":" in raw:
-                left, status = raw.rsplit(":", 1)
-                left = left.strip()
-                status = status.strip()
+                maybe_left, maybe_status = raw.rsplit(":", 1)
+                maybe_status = maybe_status.strip()
+                if re.search(r"\b(success|ok|done|fail|failed|error)\b", maybe_status, re.IGNORECASE):
+                    left = maybe_left.strip()
+                    status = maybe_status
 
             ok = bool(re.search(r"\b(success|ok|done)\b", status, re.IGNORECASE))
             kind = "success" if ok else ("error" if status else "info")

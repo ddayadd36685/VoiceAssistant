@@ -15,18 +15,18 @@ class TestVoiceAssistantModules(unittest.TestCase):
         os.environ["VOICE_ASSISTANT_DISABLE_LLM"] = "1"
         p = Parser()
         res = p.parse("帮我打开 英雄联盟")
-        self.assertEqual(res["intent"], "open_file")
-        self.assertEqual(res["target"], "英雄联盟")
+        self.assertEqual(res["actions"][0]["intent"], "open_file")
+        self.assertEqual(res["actions"][0]["target"], "英雄联盟")
 
         res = p.parse("打开 WeGame 打开一下")
-        self.assertEqual(res["intent"], "open_file")
-        self.assertEqual(res["target"], "Wegame")
+        self.assertEqual(res["actions"][0]["intent"], "open_file")
+        self.assertEqual(res["actions"][0]["target"], "Wegame")
 
         res = p.parse("帮我打开 main.py")
-        self.assertEqual(res["intent"], "unknown")
+        self.assertEqual(res["actions"][0]["intent"], "unknown")
 
         res = p.parse("你好")
-        self.assertEqual(res["intent"], "unknown")
+        self.assertEqual(res["actions"][0]["intent"], "unknown")
 
     def test_wakeword_mock(self):
         w = WakeWordDetector()

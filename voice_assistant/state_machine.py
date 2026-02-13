@@ -11,6 +11,14 @@ from .asr import ASR
 from .parser import Parser
 from .mcp_client import MCPClient, ensure_mcp_config_files
 
+import os
+try:
+    import os
+    os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "1"
+    import pygame
+except ImportError:
+    pygame = None
+
 class State(Enum):
     IDLE = auto()
     LISTENING = auto()
@@ -38,10 +46,45 @@ class VoiceAssistant:
         self.parser = Parser()
         self.mcp = MCPClient()
         
+        # Init sound
+        self.sound_start = None
+        self.sound_stop = None
+        if pygame:
+            try:
+                pygame.mixer.init()
+                root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                start_path = os.path.join(root, "sound", "start.wav")
+                stop_path = os.path.join(root, "sound", "stop.mp3")
+                
+                if os.path.exists(start_path):
+                    self.sound_start = pygame.mixer.Sound(start_path)
+                if os.path.exists(stop_path):
+                    self.sound_stop = pygame.mixer.Sound(stop_path)
+            except Exception as e:
+                self.logger.warning(f"Failed to init pygame sound: {e}")
+
         # Runtime data
         self.last_asr_text = ""
         self.last_intent = {}
         self.last_action_result = {}
+
+    def _play_prompt_tone(self, kind: str) -> None:
+        sound = None
+        if kind == "start":
+            sound = self.sound_start
+        elif kind == "stop":
+            sound = self.sound_stop
+            
+        if sound:
+            try:
+                sound.play()
+                # Wait for sound to finish to avoid recording it
+                # For start sound, we want to wait. For stop sound, maybe not strictly necessary but good for UX.
+                dur = sound.get_length()
+                if dur > 0:
+                    time.sleep(dur + 0.1)
+            except Exception as e:
+                self.logger.debug(f"Pygame play failed: {e}")
 
     def _emit(self, event_type: str, data: Dict[str, Any] = None):
         if data is None:
@@ -107,8 +150,14 @@ class VoiceAssistant:
                                 
                         elif self.state == State.LISTENING:
                             # Capture audio until silence
+                            self._play_prompt_tone("start")
+                            try:
+                                stream.queue.clear()
+                            except Exception:
+                                pass
                             self._emit("recording_started")
                             audio_data = self.vad.capture(stream)
+                            self._play_prompt_tone("stop")
                             self.logger.info(f"Recorded {len(audio_data)} bytes.")
                             self._emit("recording_stopped", {"bytes": len(audio_data)})
                             
@@ -128,25 +177,41 @@ class VoiceAssistant:
                             self._set_state(State.EXECUTING)
                             
                         elif self.state == State.EXECUTING:
-                            intent = self.current_intent.get("intent", "unknown")
-                            target = self.current_intent.get("target", "")
+                            actions = self.current_intent.get("actions", [])
                             reply = self.current_intent.get("reply", "")
+                            
+                            # Log and emit start
+                            self._emit("action_started", {"actions": actions, "reply": reply})
 
-                            self._emit("action_started", {"intent": intent, "target": target, "reply": reply})
-
-                            if intent == "chat":
-                                # Just emit the reply for UI/TTS
-                                success = True
-                                result_msg = reply
-                            else:
+                            results = []
+                            overall_success = True
+                            
+                            for action in actions:
+                                intent = action.get("intent", "unknown")
+                                target = action.get("target", "")
+                                
+                                if intent in ("unknown", "chat"):
+                                    continue
+                                
                                 success = self.mcp.execute(intent, target)
                                 if not success:
-                                    result_msg = f"操作失败: {intent} {target}"
+                                    overall_success = False
+                                    results.append(f"操作失败: {target}")
                                 else:
-                                    # If LLM provided a specific reply, use it; otherwise use default
-                                    result_msg = reply if reply else f"已为您执行：{intent} {target}"
+                                    results.append(f"已执行: {target}")
+
+                            # If no system actions were performed, use reply as result message
+                            if not results:
+                                result_msg = reply
+                            else:
+                                # Combine system results
+                                action_summary = "；".join(results)
+                                if reply:
+                                    result_msg = f"{reply} ({action_summary})"
+                                else:
+                                    result_msg = action_summary
                             
-                            self.last_action_result = {"success": success, "message": result_msg}
+                            self.last_action_result = {"success": overall_success, "message": result_msg}
                             self._emit("action_finished", self.last_action_result)
                             
                             self.logger.info(f"Execution done. Reply: {result_msg}")
