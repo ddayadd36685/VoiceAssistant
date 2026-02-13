@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 import websocket
 import yaml
+from voice_assistant.mcp_client import ensure_mcp_config_files
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QMenu, QSystemTrayIcon,
     QGraphicsOpacityEffect, QDialog, QTabWidget, QFormLayout, QHBoxLayout,
@@ -333,6 +334,7 @@ class SettingsDialog(QDialog):
         self.config_path = self.project_root / "config.yaml"
         self.file_config_path = self.project_root / "mcp_config" / "file_config.yaml"
         self.web_config_path = self.project_root / "mcp_config" / "web_config.yaml"
+        ensure_mcp_config_files(self.project_root)
 
         self.setWindowTitle("设置")
         self.setMinimumWidth(760)

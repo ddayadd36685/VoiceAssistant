@@ -6,6 +6,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from .logger import get_logger
+from .mcp_client import ensure_mcp_config_files
 import yaml
 
 
@@ -58,15 +59,15 @@ class Parser:
         return keywords
 
     def _load_file_keywords(self) -> List[str]:
-        config_path = Path(__file__).resolve().parents[1] / "mcp_config" / "file_config.yaml"
+        config_path = ensure_mcp_config_files().get("file_config") or (Path(__file__).resolve().parents[1] / "mcp_config" / "file_config.yaml")
         return self._load_keywords(config_path, "files")
 
     def _load_web_keywords(self) -> List[str]:
-        config_path = Path(__file__).resolve().parents[1] / "mcp_config" / "web_config.yaml"
+        config_path = ensure_mcp_config_files().get("web_config") or (Path(__file__).resolve().parents[1] / "mcp_config" / "web_config.yaml")
         return self._load_keywords(config_path, "websites")
 
     def _load_web_items(self) -> List[Dict[str, Any]]:
-        config_path = Path(__file__).resolve().parents[1] / "mcp_config" / "web_config.yaml"
+        config_path = ensure_mcp_config_files().get("web_config") or (Path(__file__).resolve().parents[1] / "mcp_config" / "web_config.yaml")
         if not config_path.exists():
             return []
         try:
@@ -161,6 +162,28 @@ class Parser:
         file_keywords = self._load_file_keywords()
         web_keywords = self._load_web_keywords()
         web_items = self._load_web_items()
+
+        disable_llm = (os.getenv("VOICE_ASSISTANT_DISABLE_LLM") or "").strip().lower() in ("1", "true", "yes", "y")
+        if disable_llm:
+            for pat in self.web_patterns:
+                m = re.search(pat, text)
+                if not m:
+                    continue
+                raw_target = (m.groupdict().get("target") or "").strip()
+                norm = self._normalize_web_to_canonical(raw_target, web_items)
+                if norm:
+                    return {"intent": "open_web", "target": norm, "reply": ""}
+
+            for pat in self.patterns:
+                m = re.search(pat, text)
+                if not m:
+                    continue
+                raw_target = (m.groupdict().get("target") or "").strip()
+                norm = self._normalize_to_allowed_keyword(raw_target, file_keywords)
+                if norm:
+                    return {"intent": "open_file", "target": norm, "reply": ""}
+
+            return {"intent": "unknown", "target": "", "reply": ""}
 
         api_key = self._load_api_key()
         if not api_key:

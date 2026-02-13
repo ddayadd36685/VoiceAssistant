@@ -8,9 +8,11 @@ from typing import List, Optional
 import yaml
 try:
     from .logger import get_logger
+    from .mcp_client import ensure_mcp_config_files
 except ImportError:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from voice_assistant.logger import get_logger
+    from voice_assistant.mcp_client import ensure_mcp_config_files
 
 class ASRBackend:
     def transcribe(self, audio_data: bytes) -> str:
@@ -66,7 +68,7 @@ class SherpaASR(ASRBackend):
         self.logger.info("Sherpa-ONNX model loaded.")
 
     def _load_hotwords_from_file_config(self) -> List[str]:
-        config_path = Path(__file__).resolve().parents[1] / "mcp_config" / "file_config.yaml"
+        config_path = ensure_mcp_config_files().get("file_config") or (Path(__file__).resolve().parents[1] / "mcp_config" / "file_config.yaml")
         if not config_path.exists():
             return []
 
@@ -105,7 +107,7 @@ class SherpaASR(ASRBackend):
         return keywords
 
     def _get_hotwords_text(self) -> str:
-        config_path = Path(__file__).resolve().parents[1] / "mcp_config" / "file_config.yaml"
+        config_path = ensure_mcp_config_files().get("file_config") or (Path(__file__).resolve().parents[1] / "mcp_config" / "file_config.yaml")
         mtime: Optional[float]
         try:
             mtime = config_path.stat().st_mtime if config_path.exists() else None

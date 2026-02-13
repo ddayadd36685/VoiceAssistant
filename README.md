@@ -51,11 +51,45 @@ python run_ui.py
 
 主配置文件：`config.yaml`
 
+### ASR（语音识别引擎）
+
+支持的引擎：
+- `sherpa`（Sherpa-ONNX）
+- `funasr`（FunASR / SenseVoiceSmall）
+
+示例：
+
+```yaml
+asr:
+  provider: funasr
+  sherpa:
+    model_path: voice_assistant/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
+  funasr:
+    model_name: iic/SenseVoiceSmall
+    device: cuda   # 可选：cuda/cpu
+```
+
+在 UI 的“设置”里切换 ASR 引擎后会触发重启。
+
+### LLM（意图识别 + 闲聊）
+
+当前 Parser 完全由大模型驱动：既能给系统返回可执行的指令（如打开文件/网页），也能返回对用户的自然回复（闲聊/问答）。
+
+需要配置 DeepSeek API Key（二选一）：
+- 系统环境变量：`DEEPSEEK_API_KEY`
+- 或在项目根目录创建/编辑 `.env`，写入：`DEEPSEEK_API_KEY=你的key`
+
+注意：不要把真实 Key 提交到仓库。
+
 其中 VAD 支持以下可选项（用于控制“静音判停”与录音时长等行为）：
 - `vad.silence_threshold`
 - `vad.max_recording_sec`
 - `vad.wakeup_silence_limit_sec`（默认 2.5）
 - `vad.wakeup_silence_ramp_sec`（默认 1.0）
+
+## 语音识别模式
+
+当前是“录完一段再识别”的非流式模式：唤醒后录音直到检测到静音结束，然后把整段音频送去识别，再进入解析与执行。
 
 ## 测试
 
@@ -64,6 +98,10 @@ python -m pytest -q
 ```
 
 ## 常见问题
+
+### Notice: ffmpeg is not installed
+
+这是提示不是报错：未安装 ffmpeg 时，会使用 `torchaudio` 做音频解码。通常不影响录音识别流程。
 
 ### 模型太大怎么处理？
 

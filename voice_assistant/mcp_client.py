@@ -6,12 +6,50 @@ import yaml
 from .logger import get_logger
 from mcptool import open_file, open_web
 
+def ensure_mcp_config_files(project_root: Optional[Path] = None) -> Dict[str, Path]:
+    root = project_root or Path(__file__).resolve().parents[1]
+    mcp_dir = root / "mcp_config"
+    try:
+        mcp_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return {"dir": mcp_dir, "file_config": mcp_dir / "file_config.yaml", "web_config": mcp_dir / "web_config.yaml"}
+
+    file_config = mcp_dir / "file_config.yaml"
+    web_config = mcp_dir / "web_config.yaml"
+
+    if not file_config.exists():
+        try:
+            text = yaml.safe_dump(
+                {"files": []},
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            )
+            file_config.write_text(text, encoding="utf-8")
+        except Exception:
+            pass
+
+    if not web_config.exists():
+        try:
+            text = yaml.safe_dump(
+                {"websites": []},
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            )
+            web_config.write_text(text, encoding="utf-8")
+        except Exception:
+            pass
+
+    return {"dir": mcp_dir, "file_config": file_config, "web_config": web_config}
+
 class MCPClient:
     def __init__(self):
         self.logger = get_logger(__name__)
+        ensure_mcp_config_files()
 
     def _load_file_config(self) -> List[Dict[str, Any]]:
-        config_path = Path(__file__).resolve().parents[1] / "mcp_config" / "file_config.yaml"
+        config_path = ensure_mcp_config_files().get("file_config") or (Path(__file__).resolve().parents[1] / "mcp_config" / "file_config.yaml")
         if not config_path.exists():
             self.logger.warning("file_config.yaml not found. No files are allowed to open.")
             return []
@@ -30,7 +68,7 @@ class MCPClient:
         return files
 
     def _load_web_config(self) -> List[Dict[str, Any]]:
-        config_path = Path(__file__).resolve().parents[1] / "mcp_config" / "web_config.yaml"
+        config_path = ensure_mcp_config_files().get("web_config") or (Path(__file__).resolve().parents[1] / "mcp_config" / "web_config.yaml")
         if not config_path.exists():
             self.logger.warning("web_config.yaml not found. No websites are allowed to open.")
             return []

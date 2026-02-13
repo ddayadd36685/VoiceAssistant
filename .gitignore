@@ -27,4 +27,5 @@ Thumbs.db
 .DS_Store
 .trae/
 voice_assistant/models/
+mcp_config/
 *.log

@@ -9,7 +9,7 @@ from .wakeword import WakeWordDetector
 from .vad_recorder import VadRecorder
 from .asr import ASR
 from .parser import Parser
-from .mcp_client import MCPClient
+from .mcp_client import MCPClient, ensure_mcp_config_files
 
 class State(Enum):
     IDLE = auto()
@@ -29,6 +29,8 @@ class VoiceAssistant:
         self.running = False
         self.on_event = on_event
         
+        ensure_mcp_config_files()
+
         # Initialize modules
         self.wakeword = WakeWordDetector()
         self.vad = VadRecorder()
@@ -164,4 +166,3 @@ class VoiceAssistant:
         except Exception as e:
              self.logger.critical(f"Failed to initialize microphone: {e}")
              self._emit("fatal_error", {"message": str(e)})
-
